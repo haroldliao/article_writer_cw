@@ -1,0 +1,21 @@
+# === 基本環境 ===
+streamlit>=1.31.0
+openai>=1.40.0
+
+# === 資料處理 ===
+pandas>=2.0.0
+numpy>=1.24.0
+
+# === 文件處理 ===
+python-docx>=0.8.11
+
+# === 開發工具（可選，看需求）===
+# jupyter         # 如果你要 Notebook 測試才需要
+# faiss-cpu       # 如果未來要大規模 embeddings 檢索才需要
+
+streamlit>=1.31.0
+openai>=1.40.0
+pandas>=2.0.0
+numpy>=1.24.0
+python-docx>=0.8.11
+requests>=2.31.0
