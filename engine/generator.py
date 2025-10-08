@@ -271,3 +271,211 @@ if __name__ == "__main__":
 
     except Exception as e:
         print(f"❌ 錯誤: {e}")
+
+# === blocks utilities: parse / rebuild / regenerate ===
+import re
+import os
+from typing import List, Dict, Optional
+from openai import OpenAI
+
+HEADING_RE = re.compile(r"(?m)^###\s+(.+)$")
+
+def parse_article_to_blocks(md: str) -> List[Dict[str, str]]:
+    """
+    依 '### 小標題' 解析文章為區塊：
+    每個區塊：{"role": "opening|body|closing", "title": str, "content": str}
+    規則：第一塊預設 opening；最後一塊若標題含「收尾/結語/結論/展望」則 closing，否則最後一塊亦視為 closing。
+    其餘為 body。
+    """
+    md = md.replace("\r\n", "\n").strip()
+    matches = list(HEADING_RE.finditer(md))
+    blocks = []
+
+    if not matches:
+        # 沒有小標,整篇視為單一 opening
+        return [{"role": "opening", "title": "開場", "content": md}]
+
+    for i, m in enumerate(matches):
+        title = m.group(1).strip()
+        start = m.end()
+        end = matches[i+1].start() if i + 1 < len(matches) else len(md)
+        content = md[start:end].strip()
+        blocks.append({"role": "body", "title": title, "content": content})
+
+    # 調整首尾角色
+    if blocks:
+        blocks[0]["role"] = "opening"
+        # 判斷最後一塊是否為收尾
+        closing_keywords = ("收尾", "結語", "結論", "展望")
+        if any(k in blocks[-1]["title"] for k in closing_keywords):
+            blocks[-1]["role"] = "closing"
+        else:
+            # 若沒有明示關鍵詞,也將最後一塊當作 closing（實務較穩定）
+            blocks[-1]["role"] = "closing"
+
+    return blocks
+
+
+def build_article_from_blocks(blocks: List[Dict[str, str]]) -> str:
+    """
+    把區塊組回 Markdown：每塊以 "### {title}\n\n{content}" 形式串接
+    """
+    parts = []
+    for b in blocks:
+        title = b.get("title", "").strip() or "小標題"
+        content = (b.get("content", "") or "").strip()
+        parts.append(f"### {title}\n\n{content}".strip())
+    return "\n\n".join(parts).strip()
+
+
+def _clip(text: str, n: int = 800) -> str:
+    """
+    在句子邊界裁剪文字,避免語意斷裂
+    優先在句號、問號、驚嘆號處切斷
+    """
+    text = text.strip()
+    if len(text) <= n:
+        return text
+    
+    # 嘗試在句子邊界(。！?)切斷
+    cutoff = text[:n]
+    for sep in ("。", "!", "?", "!", "?"):
+        last_idx = cutoff.rfind(sep)
+        if last_idx > n * 0.6:  # 至少保留 60% 內容
+            return text[:last_idx + 1] + "…"
+    
+    # 找不到句子邊界,嘗試在逗號或空格切
+    for sep in (",", "、", " "):
+        last_idx = cutoff.rfind(sep)
+        if last_idx > n * 0.7:
+            return text[:last_idx] + "…"
+    
+    # 最後方案:直接切斷
+    return text[:n] + "…"
+
+
+def regenerate_block(
+    index: int,
+    blocks: List[Dict[str, str]],
+    meta: Dict,
+    api_key: Optional[str] = None,
+    model: str = "gpt-4o-mini",
+) -> Dict[str, str]:
+    """
+    只重生指定 index 的區塊,並保持與上下文一致。
+    參考 meta：subject/company/people/participants/summary_points/opening_style/opening_context/paragraphs/word_count_range
+    回傳新的區塊 dict（含 title/content）
+    若發生錯誤,回傳原區塊以避免資料遺失
+    """
+    # 驗證索引
+    if not (0 <= index < len(blocks)):
+        raise ValueError(f"區塊索引 {index} 超出範圍 [0, {len(blocks)-1}]")
+    
+    target = blocks[index]
+    
+    try:
+        client = OpenAI(api_key=api_key or os.getenv("OPENAI_API_KEY"))
+
+        # 上下文摘要：前後各 1 塊,避免 prompt 過長
+        prev_ctx = build_article_from_blocks(blocks[max(0, index-1):index]) if index > 0 else ""
+        next_ctx = build_article_from_blocks(blocks[index+1:min(len(blocks), index+2)]) if index < len(blocks)-1 else ""
+
+        role = target.get("role", "body")
+        title = target.get("title", "小標題").strip()
+        content = target.get("content", "").strip()
+
+        # 基礎限制
+        wc = meta.get("word_count_range", (1500, 2000))
+        paragraphs_cnt = meta.get("paragraphs", 3)
+
+        # 段落字數建議（開場/收尾較短）
+        if role == "opening":
+            per_block_min, per_block_max = 100, 180
+        elif role == "closing":
+            per_block_min, per_block_max = 100, 160
+        else:
+            per_block_min, per_block_max = 300, 420
+
+        # 開場風格設定（若重生 opening 就特別加入）
+        opening_style = meta.get("opening_style", "場景式")
+        opening_context = meta.get("opening_context", "")
+
+        # 系統與使用者訊息
+        sys = "你是資深採訪編輯,擅長在不改變文章既有內容主旨下,修寫單一段落並維持全篇語氣一致。"
+
+        # 目標段落任務說明
+        task_lines = [
+            f"段落角色：{role}（title: {title}）",
+            f"請重寫『單一段落』,字數建議 {per_block_min}–{per_block_max} 字,保持流暢、不贅述。",
+            "保留事實與主旨,不要篡改既有資訊或捏造引用。",
+            "維持全篇語氣一致；使用『### 小標題』+ 內容 的格式輸出。",
+            "若為主體段落,至少包含一則受訪者引言（使用「」）。",
+        ]
+        if role == "opening":
+            task_lines.extend([
+                f"此段為開場,需遵循風格：{opening_style}；參考採訪情境：{opening_context}",
+                "開場需自然銜接主題,避免套話與空泛形容詞。"
+            ])
+        if role == "closing":
+            task_lines.append("此段為收尾,需總結方法論/價值觀,並自然收束。")
+
+        task_text = "\n".join(f"- {t}" for t in task_lines)
+
+        # 組合 prompt
+        user_prompt = f"""請只重寫『單一段落』,並保持與上下文一致。
+
+=== 基本資料 ===
+主題：{meta.get('subject','')}
+企業名稱：{meta.get('company','')}
+人物姓名：{meta.get('people','')}
+受訪者清單：{meta.get('participants','')}
+
+重點摘要：
+{meta.get('summary_points','')}
+
+=== 上文參考（不可矛盾,不要改動） ===
+{_clip(prev_ctx, 400)}
+
+=== 待重寫段落（原始） ===
+### {title}
+
+{_clip(content, 600)}
+
+=== 下文參考（不可矛盾,不要改動） ===
+{_clip(next_ctx, 400)}
+
+=== 寫作任務 ===
+{task_text}
+
+=== 輸出格式 ===
+請只輸出該段落,包含一行小標題（### ）與其後的內容,不要額外多段說明。
+"""
+
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": sys},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.6,
+            max_tokens=900,
+        )
+        out = resp.choices[0].message.content.strip()
+
+        # 解析輸出：取第一個 "### " 做為新標題；其後為內容
+        m = re.search(r"(?m)^###\s+(.+)$", out)
+        if m:
+            new_title = m.group(1).strip()
+            new_content = out[m.end():].strip()
+        else:
+            # 若模型未含標題,保留原標題
+            new_title = title
+            new_content = out
+
+        return {"role": role, "title": new_title, "content": new_content}
+    
+    except Exception as e:
+        print(f"⚠️ 重生區塊 {index} 失敗: {e}")
+        print(f"   原因: {type(e).__name__}")
+        # 回傳原區塊,避免資料遺失
+        return target.copy()
