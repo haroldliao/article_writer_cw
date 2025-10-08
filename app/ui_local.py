@@ -1,106 +1,196 @@
-import sys
-import os
-from pathlib import Path
+"""
+ui_local.py（本地端開發版 - 含分段重寫功能）
+可輸入自有 API Key，無需 Secrets 或密碼。
+"""
+
 import streamlit as st
+from engine.generator import generate_article, parse_article_to_blocks, build_article_from_blocks, regenerate_block
 
-# === 將專案根目錄加入模組搜尋路徑 ===
-project_root = Path(__file__).parent.parent
-sys.path.append(str(project_root))
 
-from engine.generator import generate_article
-from selector import list_styles
+def main():
+    st.set_page_config(page_title="新聞稿生成器（本地版）", page_icon="🧠", layout="wide")
+    st.title("🧠 新聞稿生成器（本地開發版）")
+    st.markdown("---")
 
-# === 頁面設定 ===
-st.set_page_config(page_title="專訪文章生成器（本機版）", layout="wide")
-st.title("🧠 專訪文章生成器 — 本機版")
+    # === 側邊欄設定 ===
+    with st.sidebar:
+        st.header("⚙️ 本地設定")
 
-# === 使用者輸入區 ===
-with st.sidebar:
-    st.header("輸入區（開發者用）")
+        # ✅ 使用者自行輸入 API Key
+        api_key = st.text_input("🔑 請輸入 OpenAI API Key", type="password")
+        if not api_key:
+            st.warning("請先輸入 OpenAI API Key 才能生成文章。")
+            st.stop()
 
-    # 金鑰輸入
-    api_key = st.text_input("🔑 輸入你的 OpenAI API Key", type="password")
+        model = st.selectbox(
+            "選擇模型",
+            ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"],
+            index=1
+        )
 
-    # 基本資料
-    subject = st.text_input("主題")
-    company = st.text_input("企業名稱（可多個，用逗號分隔）")
-    people = st.text_input("人物姓名（可多個，用逗號分隔）")
-    participants = st.text_area("受訪者清單（選填，多位請分行）")
+        word_count_label = st.selectbox(
+            "字數範圍",
+            ["300-500", "500-800", "800-1200"],
+            index=1
+        )
+        word_count_range = tuple(map(int, word_count_label.split("-")))
 
-    # ✅ 新增：開場風格與採訪情境
+        paragraphs = st.slider("段落數量", 3, 8, 5)
+
+    # === 主要輸入區 ===
+    st.header("📝 新聞稿內容設定")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        subject = st.text_input("新聞主題 *", placeholder="例：公司推出新產品")
+        company = st.text_input("公司名稱 *", placeholder="例：科技創新股份有限公司")
+
+    with col2:
+        people = st.text_input("相關人物", placeholder="例：執行長王大明、技術長李小華")
+        participants = st.text_input("參與單位", placeholder="例：工研院、台大、資策會")
+
+    # === 開場風格設定 ===
+    st.subheader("🎨 開場風格")
     opening_style = st.selectbox(
-        "開場風格（五選一）",
-        ["場景式", "金句式", "事件式", "對比式", "成就式"]
+        "選擇開場方式",
+        ["直述主題", "引用名言", "提出問題", "描述場景", "數據開場", "故事開場"]
     )
-
     opening_context = st.text_area(
-        "採訪情境（地點/氛圍/場景/互動）",
-        placeholder="例：在台中工業區的廠房，一進門就是機器運轉聲與熱氣交織。"
+        "開場補充說明（選填）",
+        placeholder="例：強調產品的創新性、市場需求、社會影響等",
+        height=100
     )
 
-    # 主體設定
-    transcript_text = st.text_area("逐字稿內容（請直接貼上）")
-    summary_points = st.text_area("重點摘要（每行一點，建議 3–7 行）")
+    # === 關鍵訊息 ===
+    st.subheader("📋 內容要點")
+    summary_points = st.text_area(
+        "關鍵訊息（每行一個要點）",
+        placeholder="• 產品特色與優勢\n• 市場定位與目標客群\n• 預期效益與影響\n• 未來發展計畫",
+        height=150
+    )
 
-    # 風格類型（企業 / 學校 / 政府）
-    styles = list_styles() or ["企業", "學校", "政府"]
-    style_label = st.selectbox("文章風格類型", styles)
+    # === 生成按鈕 ===
+    st.markdown("---")
+    if st.button("🚀 生成新聞稿", type="primary", use_container_width=True):
+        if not subject or not company:
+            st.error("❌ 請填寫『新聞主題』與『公司名稱』")
+            st.stop()
 
-    # 字數與段落設定
-    word_count = st.slider("字數範圍", 1500, 2000, (1500, 2000))
-    paragraphs = st.radio("段落數", [3, 4])
-
-    # 生成按鈕
-    generate_btn = st.button("生成文章")
-
-# === 右側輸出 ===
-st.header("輸出區")
-
-if generate_btn:
-    if not api_key:
-        st.error("⚠️ 請輸入 OpenAI API Key")
-        st.stop()
-
-    # 基本欄位檢查
-    required_fields = {
-        "主題": subject,
-        "企業": company,
-        "人物": people,
-        "逐字稿": transcript_text,
-        "重點摘要": summary_points,
-    }
-    missing = [k for k, v in required_fields.items() if not v.strip()]
-
-    if missing:
-        st.error(f"⚠️ 請填寫以下欄位: {', '.join(missing)}")
-    else:
-        with st.spinner("⏳ 正在生成文章..."):
+        with st.spinner("🤖 AI 正在生成新聞稿..."):
             try:
-                # ✅ 傳入新版參數名稱（對應 generator.py）
                 article, checks, retries = generate_article(
+                    api_key=api_key,
+                    model=model,
                     subject=subject.strip(),
                     company=company.strip(),
                     people=people.strip(),
                     participants=participants.strip(),
-                    transcript=transcript_text.strip(),
                     summary_points=summary_points.strip(),
-                    opening_style=opening_style,       # ✅ 新增
-                    opening_context=opening_context,   # ✅ 新增
-                    word_count_range=word_count,
+                    opening_style=opening_style,
+                    opening_context=opening_context.strip(),
+                    word_count_range=word_count_range,
                     paragraphs=paragraphs,
-                    api_key=api_key
                 )
 
-                st.subheader("📰 文章內容")
-                st.markdown(article)
+                st.session_state.meta = {
+                    "subject": subject.strip(),
+                    "company": company.strip(),
+                    "people": people.strip(),
+                    "participants": participants.strip(),
+                    "summary_points": summary_points.strip(),
+                    "opening_style": opening_style,
+                    "opening_context": opening_context,
+                    "word_count_range": word_count_range,
+                    "paragraphs": paragraphs,
+                }
+                st.session_state.blocks = parse_article_to_blocks(article)
+                st.session_state.article = article
 
-                st.subheader("✅ 檢查結果")
+                st.success(f"✅ 新聞稿生成成功！（重試次數：{retries}）")
                 st.json(checks)
 
-                if retries == 0:
-                    st.success("✨ 一次生成成功，無需修稿")
-                else:
-                    st.warning(f"✏️ 本文經過 {retries} 次自動修稿")
-
             except Exception as e:
-                st.error(f"生成文章時發生錯誤: {e}")
+                st.error(f"❌ 生成失敗：{str(e)}")
+                st.stop()
+
+    # === 顯示結果 ===
+    if "article" in st.session_state:
+        st.markdown("---")
+        st.header("📰 生成結果")
+        st.markdown(st.session_state.article)
+        st.download_button(
+            label="📥 下載新聞稿 (TXT)",
+            data=st.session_state.article,
+            file_name="新聞稿.txt",
+            mime="text/plain"
+        )
+
+    # === 區塊重寫 ===
+    if "blocks" in st.session_state and st.session_state.blocks:
+        st.divider()
+        st.subheader("🧩 區塊編輯（逐段重寫）")
+
+        for idx, block in enumerate(st.session_state.blocks):
+            with st.expander(f"{idx+1}. [{block['role']}] {block['title']}", expanded=True):
+                edited = st.text_area(
+                    "段落內容（可手動修改後套用）",
+                    value=block["content"],
+                    height=220,
+                    key=f"ta_{idx}"
+                )
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("✏️ 重生本段", key=f"regen_{idx}", use_container_width=True):
+                        with st.spinner(f"🤖 正在重生第 {idx+1} 段..."):
+                            try:
+                                new_block = regenerate_block(
+                                    index=idx,
+                                    blocks=st.session_state.blocks,
+                                    meta=st.session_state.meta,
+                                    api_key=api_key,
+                                    model=model,
+                                )
+                                st.session_state.blocks[idx] = new_block
+                                st.success(f"✅ 第 {idx+1} 段已重生")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ 重生段落失敗：{e}")
+
+                with col2:
+                    if st.button("✅ 套用手動更改", key=f"apply_{idx}", use_container_width=True):
+                        st.session_state.blocks[idx]["content"] = edited
+                        st.success(f"✅ 第 {idx+1} 段已套用手動更改")
+                        st.rerun()
+
+        # === 預覽與套用 ===
+        st.divider()
+        col_preview, col_apply = st.columns([2, 1])
+        with col_preview:
+            if st.button("🧵 重新組稿預覽", use_container_width=True):
+                st.session_state.preview_article = build_article_from_blocks(st.session_state.blocks)
+        with col_apply:
+            if st.button("💾 套用為最終稿", type="primary", use_container_width=True):
+                st.session_state.article = build_article_from_blocks(st.session_state.blocks)
+                st.success("✅ 已套用為最終稿")
+                st.rerun()
+
+        if "preview_article" in st.session_state:
+            st.subheader("📰 重組後文章預覽")
+            st.markdown(st.session_state.preview_article)
+            st.download_button(
+                label="📥 下載重組稿 (TXT)",
+                data=st.session_state.preview_article,
+                file_name="新聞稿_重組.txt",
+                mime="text/plain",
+                key="download_preview"
+            )
+
+    # === 頁尾 ===
+    st.markdown("---")
+    st.caption("💻 本地開發版 | 可自訂 API Key | Powered by OpenAI")
+
+
+if __name__ == "__main__":
+    main()
