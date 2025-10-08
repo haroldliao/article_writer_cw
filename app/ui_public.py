@@ -2,15 +2,22 @@
 ui_public.py（雲端正式版 - 含分段重寫功能）
 使用 Streamlit Secrets 管理 API Key
 """
+import sys
+from pathlib import Path
 
+# 🔧 加入專案根目錄到模組搜尋路徑，確保可匯入 engine/
+project_root = Path(__file__).resolve().parent.parent
+if str(project_root) not in sys.path:
+    sys.path.append(str(project_root))
+    
 import streamlit as st
 from engine.generator import generate_article, parse_article_to_blocks, build_article_from_blocks, regenerate_block
 
 
 def main():
-    st.set_page_config(page_title="新聞稿生成器", page_icon="📰", layout="wide")
+    st.set_page_config(page_title="專題文章生成器", page_icon="📰", layout="wide")
     
-    st.title("📰 新聞稿生成器（雲端正式版）")
+    st.title("📰 專題文章生成器（雲端正式版）")
     st.markdown("---")
 
     # === 側邊欄：基本設定 ===
@@ -42,7 +49,7 @@ def main():
         paragraphs = st.slider("段落數量", 3, 8, 5)
 
     # === 主要輸入區 ===
-    st.header("📝 新聞稿內容設定")
+    st.header("📝 專題文章內容設定")
     
     col1, col2 = st.columns(2)
     
@@ -85,7 +92,7 @@ def main():
             "數據開場",
             "故事開場"
         ],
-        help="選擇新聞稿的開場風格"
+        help="選擇專題文章的開場風格"
     )
     
     opening_context = st.text_area(
@@ -102,19 +109,19 @@ def main():
         "關鍵訊息（每行一個要點）",
         placeholder="• 產品特色與優勢\n• 市場定位與目標客群\n• 預期效益與影響\n• 未來發展計畫",
         height=150,
-        help="條列式輸入新聞稿應包含的重點內容"
+        help="條列式輸入專題文章應包含的重點內容"
     )
 
     # === 生成按鈕 ===
     st.markdown("---")
     
-    if st.button("🚀 生成新聞稿", type="primary", use_container_width=True):
+    if st.button("🚀 生成專題文章", type="primary", use_container_width=True):
         # 驗證必填欄位
         if not subject or not company:
             st.error("❌ 請填寫「新聞主題」和「公司名稱」")
             st.stop()
         
-        with st.spinner("🤖 AI 正在生成新聞稿..."):
+        with st.spinner("🤖 AI 正在生成專題文章..."):
             try:
                 # 呼叫生成引擎
                 article, checks, retries = generate_article(
@@ -147,7 +154,7 @@ def main():
                 st.session_state.article = article
                 
                 # ✅ 顯示結果
-                st.success(f"✅ 新聞稿生成成功！（重試次數：{retries}）")
+                st.success(f"✅ 專題文章生成成功！（重試次數：{retries}）")
                 st.json(checks)
                 
             except Exception as e:
@@ -163,9 +170,9 @@ def main():
             st.markdown(st.session_state.article)
         
         st.download_button(
-            label="📥 下載新聞稿 (TXT)",
+            label="📥 下載專題文章 (TXT)",
             data=st.session_state.article,
-            file_name="新聞稿.txt",
+            file_name="專題文章.txt",
             mime="text/plain"
         )
 
@@ -227,7 +234,7 @@ def main():
             st.download_button(
                 label="📥 下載重組稿 (TXT)",
                 data=st.session_state.preview_article,
-                file_name="新聞稿_重組.txt",
+                file_name="專題文章_重組.txt",
                 mime="text/plain",
                 key="download_preview"
             )
