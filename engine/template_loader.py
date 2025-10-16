@@ -1,6 +1,7 @@
 import os
+from pathlib import Path
 
-def load_article_template() -> str:
+def load_template() -> str:
     """
     讀取 article_template.txt 模板內容。
     若找不到模板檔案，回傳預設備援內容。
@@ -8,22 +9,25 @@ def load_article_template() -> str:
     Returns:
         str: 模板文字內容
     """
-    possible_paths = [
-        os.path.join(os.getcwd(), "engine", "templates", "article_template.txt"),
-        os.path.join(os.getcwd(), "engine", "article_template.txt"),
-        os.path.join(os.getcwd(), "data", "article_template.txt"),
-        os.path.join(os.path.dirname(__file__), "templates", "article_template.txt"),
+    # 嘗試多個可能的搜尋路徑
+    search_paths = [
+        Path.cwd() / "engine" / "templates" / "article_template.txt",
+        Path.cwd() / "engine" / "article_template.txt",
+        Path.cwd() / "data" / "article_template.txt",
+        Path(__file__).parent / "templates" / "article_template.txt",
     ]
 
-    for path in possible_paths:
-        if os.path.exists(path):
+    for path in search_paths:
+        if path.exists():
             try:
                 with open(path, "r", encoding="utf-8") as f:
-                    return f.read().strip()
+                    content = f.read().strip()
+                print(f"✅ 已載入模板：{path}")
+                return content
             except Exception as e:
                 print(f"⚠️ 無法讀取模板：{path} ({e})")
 
-    # 若找不到檔案，使用預設簡化模板
+    # 若找不到檔案，使用預設模板
     print("⚠️ 找不到 article_template.txt，使用內建模板。")
     return """
 # 專訪文章模板（內建簡化版）
