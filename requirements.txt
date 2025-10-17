@@ -1,24 +1,28 @@
-# =====================================
-# 📦 Article Writer System Requirements
-# Version: Stable Build for openai==1.40.2
-# =====================================
+# === 基本環境 ===
+streamlit>=1.31.0
+openai==1.40.2
 
-# --- 核心環境 ---
-streamlit==1.50.0
-openai==1.40.2          # ✅ 固定版本，避免升級到新版 API
-python-dotenv==1.0.1
-requests==2.32.3
-tiktoken==0.7.0
+# === 資料處理 ===
+pandas>=2.0.0
+numpy>=1.24.0
 
-# --- 資料處理 ---
-pandas==2.2.2
-numpy==1.26.4
+# === 文件處理 ===
+python-docx>=0.8.11
 
-# --- 文件處理 ---
-python-docx==0.8.11
+# === 開發工具（可選，看需求）===
+# jupyter         # 如果你要 Notebook 測試才需要
+# faiss-cpu       # 如果未來要大規模 embeddings 檢索才需要
 
-# --- 開發輔助（可選） ---
-# jupyter
-# faiss-cpu
+# ============================
+# Article Writer App 套件需求
+# ============================
 
-# ⚙️ rebuild trigger: 2025-10-17-force-rebuild
+streamlit>=1.37.0
+openai==1.40.2
+python-dotenv>=1.0.1
+pandas>=2.0.0
+tiktoken>=0.7.0
+requests>=2.31.0  # 建議保留，通用用途
+python-docx>=0.8.11
+
+
