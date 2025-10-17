@@ -50,13 +50,12 @@ with st.sidebar:
     st.header("⚙️ API 設定")
     api_key = st.text_input("🔑 OpenAI API Key *", type="password")
 
-    # API Key 驗證
     valid, msg = validate_api_key(api_key)
     st.info(msg if not valid else "✅ API Key 格式正確")
 
     st.divider()
-
     st.header("🧾 文章設定")
+
     subject = st.text_input("主題 *", placeholder="例：AI 驅動的創新策略")
     company = st.text_input("企業／組織名稱 *", placeholder="例：台灣科技公司")
 
@@ -73,7 +72,6 @@ with st.sidebar:
         placeholder="請貼上完整逐字稿（建議 2000–6000 字）"
     )
 
-    # 自動偵測長逐字稿提示
     if transcript:
         word_count = len(transcript.replace(" ", "").replace("\n", ""))
         if word_count > 8000:
@@ -105,8 +103,8 @@ with st.sidebar:
 
     model_choice = st.selectbox(
         "AI 模型選擇",
-        ["gpt-4o-mini", "gpt-4-turbo-128k", "o1-preview"],
-        help="長篇逐字稿可使用 gpt-4-turbo-128k"
+        ["gpt-5-mini", "gpt-4-turbo", "gpt-5"],
+        help="依用途選擇：短篇測試用 gpt-5-mini｜一般專訪稿 gpt-4-turbo｜高階精修用 gpt-5"
     )
 
     generate_btn = st.button("🚀 生成文章", use_container_width=True, type="primary")
@@ -123,7 +121,6 @@ if generate_btn:
             article, checks, retries = generate_article(
                 subject=subject,
                 company=company,
-                people=None,
                 participants=participants,
                 transcript=transcript,
                 summary_points=summary_points,
@@ -139,16 +136,13 @@ if generate_btn:
             st.success(f"✅ 生成完成！（重試 {retries} 次）")
 
             tab1, tab2, tab3 = st.tabs(["📄 文章內容", "🔍 品質檢查", "💾 匯出"])
-
             with tab1:
                 st.markdown(article)
                 wc = count_words(article)
                 st.caption(f"📝 字數：{wc['total']}　模型：{model_choice}")
-
             with tab2:
                 st.subheader("品質檢查結果")
                 st.json(checks)
-
             with tab3:
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 filename = f"{company}_{subject}_{timestamp}.md"
@@ -158,13 +152,11 @@ if generate_btn:
                     file_name=filename,
                     mime="text/markdown"
                 )
-                full_json = json.dumps({
-                    "article": article,
-                    "metadata": {"subject": subject, "company": company, "model": model_choice},
-                    "checks": checks
-                }, ensure_ascii=False, indent=2)
-                st.download_button("📥 下載 JSON", data=full_json, file_name=filename.replace(".md", ".json"))
 
         except Exception as e:
-            st.error(f"❌ 生成失敗：{e}")
-            st.exception(e)
+            error_msg = str(e)
+            if "模板載入失敗" in error_msg:
+                st.error("❌ 模板載入失敗，請確認 templates/article_template.txt 是否存在且可讀取。")
+            else:
+                st.error(f"❌ 生成失敗：{error_msg}")
+            st.stop()

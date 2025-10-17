@@ -62,10 +62,11 @@ with st.sidebar:
         paragraphs = st.slider("段落數", 3, 8, 5)
 
     opening_context = st.text_area("採訪情境（選填）", height=80)
+
     model_choice = st.selectbox(
         "AI 模型選擇",
-        ["gpt-4o-mini", "gpt-4-turbo-128k", "o1-preview"],
-        help="若逐字稿超過 8000 字，建議使用 gpt-4-turbo-128k"
+        ["gpt-5-mini", "gpt-4-turbo", "gpt-5"],
+        help="依用途選擇：短篇測試用 gpt-5-mini｜一般專訪稿 gpt-4-turbo｜高階精修用 gpt-5"
     )
 
     generate_btn = st.button("🚀 生成文章", use_container_width=True, type="primary")
@@ -81,7 +82,6 @@ if generate_btn:
             article, checks, retries = generate_article(
                 subject=subject,
                 company=company,
-                people=None,
                 participants=participants,
                 transcript=transcript,
                 summary_points=summary_points,
@@ -101,10 +101,8 @@ if generate_btn:
                 st.markdown(article)
                 wc = len(article.replace(" ", "").replace("\n", ""))
                 st.caption(f"📝 字數：{wc}　模型：{model_choice}")
-
             with tab2:
                 st.json(checks)
-
             with tab3:
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 st.download_button(
@@ -113,17 +111,11 @@ if generate_btn:
                     file_name=f"{company}_{subject}_{timestamp}.md",
                     mime="text/markdown"
                 )
-                full_json = json.dumps(
-                    {"article": article, "checks": checks},
-                    ensure_ascii=False, indent=2
-                )
-                st.download_button(
-                    "📥 下載 JSON",
-                    data=full_json,
-                    file_name=f"{company}_{subject}_{timestamp}.json",
-                    mime="application/json"
-                )
 
         except Exception as e:
-            st.error(f"❌ 生成失敗：{e}")
-            st.exception(e)
+            error_msg = str(e)
+            if "模板載入失敗" in error_msg:
+                st.error("❌ 模板載入失敗，請確認 templates/article_template.txt 是否存在且可讀取。")
+            else:
+                st.error(f"❌ 生成失敗：{error_msg}")
+            st.stop()
