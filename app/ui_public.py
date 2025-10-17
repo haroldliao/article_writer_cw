@@ -1,3 +1,6 @@
+import openai, streamlit
+st.sidebar.warning(f"🔍 openai 版本：{openai.__version__} ｜ streamlit：{streamlit.__version__}")
+
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
