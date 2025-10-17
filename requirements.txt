@@ -18,10 +18,10 @@ python-docx>=0.8.11
 # ============================
 
 streamlit>=1.37.0
-openai>=1.0.0
+openai>=1.40.0
+python-dotenv>=1.0.1
 pandas>=2.0.0
 tiktoken>=0.7.0
-python-dotenv>=1.0.1
 requests>=2.31.0  # 建議保留，通用用途
 python-docx>=0.8.11
 
