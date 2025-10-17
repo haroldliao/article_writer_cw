@@ -49,13 +49,11 @@ st.title("🧠 專訪文章生成器（本機版）")
 with st.sidebar:
     st.header("⚙️ API 設定")
     api_key = st.text_input("🔑 OpenAI API Key *", type="password")
-
     valid, msg = validate_api_key(api_key)
     st.info(msg if not valid else "✅ API Key 格式正確")
 
     st.divider()
     st.header("🧾 文章設定")
-
     subject = st.text_input("主題 *", placeholder="例：AI 驅動的創新策略")
     company = st.text_input("企業／組織名稱 *", placeholder="例：台灣科技公司")
 
@@ -66,12 +64,7 @@ with st.sidebar:
         height=150
     )
 
-    transcript = st.text_area(
-        "逐字稿內容 *",
-        height=300,
-        placeholder="請貼上完整逐字稿（建議 2000–6000 字）"
-    )
-
+    transcript = st.text_area("逐字稿內容 *", height=300, placeholder="請貼上完整逐字稿（建議 2000–6000 字）")
     if transcript:
         word_count = len(transcript.replace(" ", "").replace("\n", ""))
         if word_count > 8000:
@@ -85,22 +78,14 @@ with st.sidebar:
 
     st.divider()
     st.header("🎨 風格設定")
-
     col1, col2 = st.columns(2)
     with col1:
-        opening_style = st.selectbox(
-            "開場風格",
-            ["場景式", "金句式", "事件式", "對比式", "成就式"]
-        )
+        opening_style = st.selectbox("開場風格", ["場景式", "金句式", "事件式", "對比式", "成就式"])
     with col2:
         paragraphs = st.slider("段落數", 3, 8, 5)
 
-    opening_context = st.text_area(
-        "採訪情境（選填）",
-        height=80,
-        placeholder="例：午後陽光灑進落地窗，王執行長微笑著說..."
-    )
-
+    opening_context = st.text_area("採訪情境（選填）", height=80,
+                                   placeholder="例：午後陽光灑進落地窗，王執行長微笑著說...")
     model_choice = st.selectbox(
         "AI 模型選擇",
         ["gpt-5-mini", "gpt-4-turbo", "gpt-5"],
@@ -134,29 +119,26 @@ if generate_btn:
 
             st.balloons()
             st.success(f"✅ 生成完成！（重試 {retries} 次）")
-
             tab1, tab2, tab3 = st.tabs(["📄 文章內容", "🔍 品質檢查", "💾 匯出"])
             with tab1:
                 st.markdown(article)
                 wc = count_words(article)
                 st.caption(f"📝 字數：{wc['total']}　模型：{model_choice}")
             with tab2:
-                st.subheader("品質檢查結果")
                 st.json(checks)
             with tab3:
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 filename = f"{company}_{subject}_{timestamp}.md"
-                st.download_button(
-                    "📥 下載 Markdown",
-                    data=article,
-                    file_name=filename,
-                    mime="text/markdown"
-                )
+                st.download_button("📥 下載 Markdown", data=article,
+                                   file_name=filename, mime="text/markdown")
 
         except Exception as e:
             error_msg = str(e)
             if "模板載入失敗" in error_msg:
-                st.error("❌ 模板載入失敗，請確認 templates/article_template.txt 是否存在且可讀取。")
+                st.error("❌ 模板載入失敗，請確認 engine/templates/article_template.txt 是否存在且可讀取。")
+            elif "max_completion_tokens" in error_msg or "max_tokens" in error_msg:
+                st.error("⚠️ 參數錯誤：請更新 OpenAI 套件版本或確認模型支援。")
             else:
                 st.error(f"❌ 生成失敗：{error_msg}")
+        finally:
             st.stop()
