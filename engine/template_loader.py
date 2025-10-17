@@ -1,23 +1,35 @@
 import os
 from pathlib import Path
 
-def load_template() -> str:
+def load_template(filename: str = "article_template.txt") -> str:
     """
-    讀取 article_template.txt 模板內容。
-    若找不到模板檔案，回傳預設備援內容。
+    嘗試從多個可能路徑載入模板內容。
+    若找不到檔案，直接 raise Exception（不使用預設模板）。
+
+    Args:
+        filename (str): 模板檔案名稱，預設為 article_template.txt
 
     Returns:
         str: 模板文字內容
+
+    Raises:
+        FileNotFoundError: 若所有搜尋路徑皆不存在
+        Exception: 若讀取檔案發生其他錯誤
     """
-    # 嘗試多個可能的搜尋路徑
+
+    # 🟦 修改：以目前檔案所在資料夾為基準，動態組成搜尋路徑
+    base_dir = Path(__file__).resolve().parent
     search_paths = [
-        Path.cwd() / "engine" / "templates" / "article_template.txt",
-        Path.cwd() / "engine" / "article_template.txt",
-        Path.cwd() / "data" / "article_template.txt",
-        Path(__file__).parent / "templates" / "article_template.txt",
+        base_dir / "templates" / filename,                # engine/templates/article_template.txt ✅
+        base_dir / filename,                              # engine/article_template.txt
+        base_dir.parent / "templates" / filename,         # 根目錄/templates/article_template.txt
+        Path.cwd() / "engine" / "templates" / filename,   # 兼容舊版 cwd 執行
     ]
 
+    tried_paths = []  # 紀錄嘗試過的路徑
+
     for path in search_paths:
+        tried_paths.append(str(path))
         if path.exists():
             try:
                 with open(path, "r", encoding="utf-8") as f:
@@ -25,20 +37,12 @@ def load_template() -> str:
                 print(f"✅ 已載入模板：{path}")
                 return content
             except Exception as e:
-                print(f"⚠️ 無法讀取模板：{path} ({e})")
+                raise Exception(f"模板讀取失敗：{path} ({e})")
 
-    # 若找不到檔案，使用預設模板
-    print("⚠️ 找不到 article_template.txt，使用內建模板。")
-    return """
-# 專訪文章模板（內建簡化版）
-
-【開場】
-以情境或引言開場，帶出主題與人物。
-
-【主體】
-以段落呈現主軸人物（權重1）與輔助人物（權重2）的觀點與互動，
-每段 300–500 字，保持流暢與真實感。
-
-【結語】
-收斂訪談重點，回應主題或引言，帶出未來方向。
-"""
+    # 🟦 修改：找不到模板時直接 raise Exception（不使用預設模板）
+    error_message = (
+        "模板載入失敗：找不到 article_template.txt。\n"
+        f"已嘗試以下路徑：\n" + "\n".join(f" - {p}" for p in tried_paths)
+    )
+    print(f"❌ {error_message}")
+    raise Exception(error_message)
