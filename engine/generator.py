@@ -35,25 +35,6 @@ def generate_article(
 ) -> Tuple[str, Dict, int]:
     """
     生成專訪文章（支援長逐字稿安全模式 + 多模型選擇）
-    
-    Args:
-        subject: 文章主題
-        company: 企業名稱
-        participants: 受訪者資訊（格式：姓名／職稱／權重）
-        transcript: 逐字稿內容
-        summary_points: 重點摘要
-        opening_style: 開場風格
-        opening_context: 採訪情境
-        paragraphs: 段落數
-        api_key: OpenAI API 金鑰
-        model: 模型名稱
-        max_tokens: 最大 token 數
-        
-    Returns:
-        Tuple[文章內容, 品質檢查結果, 重試次數]
-        
-    Raises:
-        Exception: 當模板載入失敗或 API 呼叫失敗時
     """
     client = OpenAI(api_key=api_key)
 
@@ -134,21 +115,36 @@ def generate_article(
 6. 請輸出完整文章（含主標題 # 與小標題 ##），段落之間以空行分隔
 """
 
-    # === 呼叫 API ===
+    # === 呼叫 API（使用 Responses API） ===
     for attempt in range(MAX_API_ATTEMPTS):
         try:
-            response = client.chat.completions.create(
+            # 🟦 動態設定 token 參數
+            token_param = {}
+            max_output = MAX_TOKENS_SAFE_MODE if safe_mode else max_tokens
+
+            if "gpt-5" in selected_model:
+                token_param = {"max_completion_tokens": min(max_output, 4000)}
+            elif "gpt-4" in selected_model:
+                token_param = {"max_completion_tokens": min(max_output, 8000)}
+            else:
+                token_param = {"max_completion_tokens": min(max_output, 4000)}
+
+            print(f"🧠 使用模型：{selected_model}，Token 參數：{token_param}")
+
+            # 🟦 改用 Responses API
+            response = client.responses.create(
                 model=selected_model,
-                messages=[
+                input=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                max_tokens=MAX_TOKENS_SAFE_MODE if safe_mode else max_tokens,
+                **token_param,
                 temperature=TEMPERATURE,
                 top_p=TOP_P
             )
 
-            article = response.choices[0].message.content.strip()
+            # 🟦 新屬性 output_text
+            article = response.output_text.strip()
             checks = quality_check(article, paragraphs, participants_info)
             return article, checks, attempt
 
@@ -165,39 +161,23 @@ def summarize_long_transcript(
     transcript: str,
     model: str = SUMMARY_MODEL
 ) -> str:
-    """
-    當逐字稿超過閾值時，自動執行分段摘要。
-    
-    Args:
-        client: OpenAI 客戶端
-        transcript: 完整逐字稿
-        model: 用於摘要的模型
-        
-    Returns:
-        壓縮後的逐字稿
-    """
+    """當逐字稿超過閾值時，自動執行分段摘要。"""
     segments = _split_transcript(transcript, MAX_SEGMENT_LENGTH)
     summaries = []
     
     for idx, seg in enumerate(segments, 1):
         print(f"🧩 正在摘要第 {idx} 段，共 {len(segments)} 段...")
         try:
-            response = client.chat.completions.create(
+            response = client.responses.create(  # 🟦 改為 responses API
                 model=model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "你是一位摘要專家，請保留人物觀點、數據、事件邏輯。"
-                    },
-                    {
-                        "role": "user",
-                        "content": f"請摘要以下逐字稿內容，限 300–400 字：\n{seg}"
-                    }
+                input=[
+                    {"role": "system", "content": "你是一位摘要專家，請保留人物觀點、數據、事件邏輯。"},
+                    {"role": "user", "content": f"請摘要以下逐字稿內容，限 300–400 字：\n{seg}"}
                 ],
-                max_tokens=800,
+                max_completion_tokens=800,
                 temperature=0.5
             )
-            summaries.append(response.choices[0].message.content.strip())
+            summaries.append(response.output_text.strip())
         except Exception as e:
             print(f"⚠️ 第 {idx} 段摘要失敗：{e}")
             summaries.append(f"[摘要失敗：{seg[:200]}...]")
@@ -207,29 +187,16 @@ def summarize_long_transcript(
 
 
 def _split_transcript(transcript: str, max_length: int) -> List[str]:
-    """
-    將逐字稿分割成多個段落
-    
-    Args:
-        transcript: 完整逐字稿
-        max_length: 每段最大長度
-        
-    Returns:
-        分割後的段落列表
-    """
+    """將逐字稿分割成多個段落"""
     lines = transcript.split("\n")
-    segments = []
-    buffer = ""
-    
+    segments, buffer = [], ""
     for line in lines:
         buffer += line + "\n"
         if len(buffer) > max_length:
             segments.append(buffer.strip())
             buffer = ""
-    
     if buffer.strip():
         segments.append(buffer.strip())
-    
     return segments
 
 
@@ -239,11 +206,7 @@ def _count_chars(text: str) -> int:
 
 
 def _parse_participants(participants: str) -> List[ParticipantInfo]:
-    """
-    解析受訪者資訊
-    
-    格式：姓名／職稱／權重（1 或 0）
-    """
+    """解析受訪者資訊"""
     info = []
     for line in participants.split("\n"):
         line = line.strip()
@@ -263,7 +226,6 @@ def _format_participants(participants_info: List[ParticipantInfo]) -> str:
     """格式化受訪者資訊為描述文字"""
     if not participants_info:
         return "（未提供受訪者資料）"
-    
     return "\n".join([
         f"- {p['name']}（{p['title']}）- {'主軸人物' if p['weight'] == '1' else '輔助人物'}"
         for p in participants_info
@@ -275,42 +237,16 @@ def quality_check(
     expected_paragraphs: int, 
     participants: List[ParticipantInfo]
 ) -> Dict[str, bool]:
-    """
-    檢查文章品質
-    
-    Args:
-        article: 生成的文章
-        expected_paragraphs: 預期段落數
-        participants: 受訪者資訊
-        
-    Returns:
-        各項檢查結果
-    """
+    """檢查文章品質"""
     checks = {}
-    
-    # 檢查是否包含主標題
     checks["包含主標題"] = article.startswith("#")
-    
-    # 檢查是否包含引言
     checks["包含引言"] = "「" in article and "」" in article
-    
-    # 檢查段落數（允許誤差 1）
     paragraph_count = article.count("## ")
     checks["段落數符合"] = abs(paragraph_count - expected_paragraphs) <= 1
-    
-    # 檢查字數
     word_count = _count_chars(article)
     checks["字數充足"] = 1500 <= word_count <= 2500
-    
-    # 檢查是否提及主軸人物
     main_names = [p["name"] for p in participants if p["weight"] == "1"]
-    if main_names:
-        checks["提及主軸人物"] = any(name in article for name in main_names)
-    else:
-        checks["提及主軸人物"] = True
-    
-    # 檢查是否避免空泛詞彙
+    checks["提及主軸人物"] = any(name in article for name in main_names) if main_names else True
     filler_words = ["非常成功", "十分重要", "極為關鍵", "相當優秀", "令人感動", "展現非凡"]
     checks["避免空泛詞彙"] = not any(word in article for word in filler_words)
-    
     return checks
