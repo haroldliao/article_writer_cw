@@ -1,12 +1,13 @@
-import openai, streamlit
-st.sidebar.warning(f"🔍 openai 版本：{openai.__version__} ｜ streamlit：{streamlit.__version__}")
-
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
 import streamlit as st
 from engine.generator import generate_article
+
+import openai, streamlit
+st.sidebar.warning(f"🔍 openai 版本：{openai.__version__} ｜ streamlit：{streamlit.__version__}")
+
 from datetime import datetime
 import json
 
