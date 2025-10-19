@@ -1,6 +1,25 @@
 from openai import OpenAI
+
+# 清除 proxy 環境變數
+for var in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"]:
+    os.environ.pop(var, None)
+
+# 封裝 OpenAI 初始化,自動移除不支援的 proxies 參數
+_original_init = OpenAI.__init__
+
+def patched_init(self, *args, **kwargs):
+    if "proxies" in kwargs:
+        print("⚠️ 移除不支援的 proxies 參數")
+        kwargs.pop("proxies")
+    return _original_init(self, *args, **kwargs)
+
+OpenAI.__init__ = patched_init
+
 from typing import Dict, Tuple, Optional, List, TypedDict
 from engine.template_loader import load_template
+
+import os
+from openai import OpenAI
 
 # === 常數定義 ===
 TRANSCRIPT_LENGTH_THRESHOLD = 8000
