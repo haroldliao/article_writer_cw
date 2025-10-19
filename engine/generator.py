@@ -1,34 +1,17 @@
 import os
-from openai import OpenAI
+import openai
+from typing import Dict, Tuple, List, TypedDict
+from engine.template_loader import load_template
 
-# === 防止 SDK proxy 問題 ===
+# === 初始化設定 ===
 def _clear_proxy_env():
-    """安全清除代理環境變數"""
+    """安全清除代理環境變數（避免 Streamlit Cloud 自動注入 proxies）"""
     for var in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"]:
         if var in os.environ:
             print(f"⚠️ 移除環境變數：{var}")
             os.environ.pop(var, None)
 
-# 在 os 載入完成後執行清除
 _clear_proxy_env()
-
-# === 封裝 OpenAI 初始化，防止 proxies 參數報錯 ===
-_original_init = OpenAI.__init__
-
-def patched_init(self, *args, **kwargs):
-    """自動移除不支援的 proxies 參數"""
-    if "proxies" in kwargs:
-        print("⚠️ 移除不支援的 proxies 參數")
-        kwargs.pop("proxies")
-    return _original_init(self, *args, **kwargs)
-
-# 套用補丁
-OpenAI.__init__ = patched_init
-
-
-# === 主要程式開始 ===
-from typing import Dict, Tuple, List, TypedDict
-from engine.template_loader import load_template
 
 # === 常數定義 ===
 TRANSCRIPT_LENGTH_THRESHOLD = 8000
@@ -36,7 +19,7 @@ MAX_SEGMENT_LENGTH = 5000
 DEFAULT_MODEL = "gpt-5-mini"
 SUMMARY_MODEL = "gpt-4-turbo"
 MAX_TOKENS_NORMAL = 4000
-MAX_TOKENS_SAFE_MODE = 12000
+MAX_TOKENS_SAFE_MODE = 8000
 TEMPERATURE = 0.7
 TOP_P = 0.9
 MAX_API_ATTEMPTS = 1
@@ -62,9 +45,9 @@ def generate_article(
     max_tokens: int = MAX_TOKENS_NORMAL
 ) -> Tuple[str, Dict, int]:
     """
-    生成專訪文章（支援長逐字稿安全模式 + 多模型選擇）
+    生成專訪文章（支援新版 SDK + 多模型選擇）
     """
-    client = OpenAI(api_key=api_key)
+    openai.api_key = api_key  # ✅ 新版 SDK 使用全域金鑰設定
 
     # === 模型別名對照表 ===
     model_alias = {
@@ -74,44 +57,33 @@ def generate_article(
         "gpt-4o-mini": "gpt-4o-mini",
         "gpt-4o": "gpt-4o",
     }
-    
-    selected_model = model_alias.get(model)
-    if not selected_model:
-        print(f"⚠️ 未識別的模型名稱：{model}，自動使用 {DEFAULT_MODEL}")
-        selected_model = DEFAULT_MODEL
+    selected_model = model_alias.get(model, DEFAULT_MODEL)
 
     # === 解析受訪者資訊 ===
     participants_info = _parse_participants(participants)
     participants_desc = _format_participants(participants_info)
 
-    # === 檢查逐字稿長度 ===
+    # === 長逐字稿模式 ===
     transcript_length = _count_chars(transcript)
     safe_mode = transcript_length > TRANSCRIPT_LENGTH_THRESHOLD
     compressed_transcript = transcript
 
     if safe_mode:
-        print(f"⚠️ 啟用長逐字稿安全模式：逐字稿長度約 {transcript_length} 字")
-        compressed_transcript = summarize_long_transcript(
-            client=client,
-            transcript=transcript,
-            model=SUMMARY_MODEL
-        )
+        print(f"⚠️ 啟用長逐字稿安全模式（約 {transcript_length} 字）")
+        compressed_transcript = summarize_long_transcript(transcript, SUMMARY_MODEL, api_key)
 
     # === 載入模板 ===
     try:
         template_text = load_template("article_template.txt")
     except Exception as e:
-        error_msg = f"模板載入失敗：{str(e)}"
-        print(f"❌ {error_msg}")
-        raise Exception(error_msg)
+        raise Exception(f"模板載入失敗：{str(e)}")
 
-    # === System Prompt ===
+    # === Prompt 準備 ===
     system_prompt = (
         "你是一位專業的專訪報導撰稿人，擅長將逐字稿轉化為具敘事感與邏輯結構的完整文章，"
         "能精準控制篇幅與引用比例，符合企業／政府／教育等正式出版需求。"
     )
 
-    # === User Prompt ===
     user_prompt = f"""
 請根據以下資訊撰寫完整專訪文章，並結合文章模板作為參考：
 
@@ -143,33 +115,23 @@ def generate_article(
 6. 請輸出完整文章（含主標題 # 與小標題 ##），段落之間以空行分隔
 """
 
-    # === 呼叫 API（使用 Responses API） ===
+    # === 呼叫新版 Chat Completions API ===
     for attempt in range(MAX_API_ATTEMPTS):
         try:
-            token_param = {}
-            max_output = MAX_TOKENS_SAFE_MODE if safe_mode else max_tokens
+            print(f"🧠 使用模型：{selected_model}")
 
-            if "gpt-5" in selected_model:
-                token_param = {"max_completion_tokens": min(max_output, 4000)}
-            elif "gpt-4" in selected_model:
-                token_param = {"max_completion_tokens": min(max_output, 8000)}
-            else:
-                token_param = {"max_completion_tokens": min(max_output, 4000)}
-
-            print(f"🧠 使用模型：{selected_model}，Token 參數：{token_param}")
-
-            response = client.responses.create(
+            response = openai.chat.completions.create(
                 model=selected_model,
-                input=[
+                messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                **token_param,
                 temperature=TEMPERATURE,
-                top_p=TOP_P
+                top_p=TOP_P,
+                max_completion_tokens=min(max_tokens, 4000)
             )
 
-            article = response.output_text.strip()
+            article = response.choices[0].message.content.strip()
             checks = quality_check(article, paragraphs, participants_info)
             return article, checks, attempt
 
@@ -181,38 +143,31 @@ def generate_article(
     raise Exception("未預期錯誤：生成失敗")
 
 
-def summarize_long_transcript(
-    client: OpenAI, 
-    transcript: str,
-    model: str = SUMMARY_MODEL
-) -> str:
-    """當逐字稿超過閾值時，自動執行分段摘要。"""
+def summarize_long_transcript(transcript: str, model: str, api_key: str) -> str:
+    """長逐字稿摘要模式（使用新版 SDK）"""
+    openai.api_key = api_key
     segments = _split_transcript(transcript, MAX_SEGMENT_LENGTH)
     summaries = []
-    
     for idx, seg in enumerate(segments, 1):
-        print(f"🧩 正在摘要第 {idx} 段，共 {len(segments)} 段...")
+        print(f"🧩 正在摘要第 {idx} 段 / 共 {len(segments)} 段")
         try:
-            response = client.responses.create(
+            response = openai.chat.completions.create(
                 model=model,
-                input=[
+                messages=[
                     {"role": "system", "content": "你是一位摘要專家，請保留人物觀點、數據、事件邏輯。"},
                     {"role": "user", "content": f"請摘要以下逐字稿內容，限 300–400 字：\n{seg}"}
                 ],
-                max_completion_tokens=800,
-                temperature=0.5
+                temperature=0.5,
+                max_completion_tokens=800
             )
-            summaries.append(response.output_text.strip())
+            summaries.append(response.choices[0].message.content.strip())
         except Exception as e:
-            print(f"⚠️ 第 {idx} 段摘要失敗：{e}")
-            summaries.append(f"[摘要失敗：{seg[:200]}...]")
-
+            summaries.append(f"[摘要失敗：{e}]")
     print("✅ 摘要完成，組合為壓縮版逐字稿")
     return "\n\n".join(summaries)
 
 
 def _split_transcript(transcript: str, max_length: int) -> List[str]:
-    """將逐字稿分割成多個段落"""
     lines = transcript.split("\n")
     segments, buffer = [], ""
     for line in lines:
@@ -226,12 +181,10 @@ def _split_transcript(transcript: str, max_length: int) -> List[str]:
 
 
 def _count_chars(text: str) -> int:
-    """計算文字字數（排除空格和換行）"""
     return len(text.replace(" ", "").replace("\n", ""))
 
 
 def _parse_participants(participants: str) -> List[ParticipantInfo]:
-    """解析受訪者資訊"""
     info = []
     for line in participants.split("\n"):
         line = line.strip()
@@ -239,16 +192,11 @@ def _parse_participants(participants: str) -> List[ParticipantInfo]:
             continue
         parts = [p.strip() for p in line.split("／")]
         if len(parts) == 3:
-            info.append({
-                "name": parts[0],
-                "title": parts[1],
-                "weight": parts[2]
-            })
+            info.append({"name": parts[0], "title": parts[1], "weight": parts[2]})
     return info
 
 
 def _format_participants(participants_info: List[ParticipantInfo]) -> str:
-    """格式化受訪者資訊為描述文字"""
     if not participants_info:
         return "（未提供受訪者資料）"
     return "\n".join([
@@ -257,12 +205,7 @@ def _format_participants(participants_info: List[ParticipantInfo]) -> str:
     ])
 
 
-def quality_check(
-    article: str, 
-    expected_paragraphs: int, 
-    participants: List[ParticipantInfo]
-) -> Dict[str, bool]:
-    """檢查文章品質"""
+def quality_check(article: str, expected_paragraphs: int, participants: List[ParticipantInfo]) -> Dict[str, bool]:
     checks = {}
     checks["包含主標題"] = article.startswith("#")
     checks["包含引言"] = "「" in article and "」" in article
