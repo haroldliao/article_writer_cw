@@ -1,17 +1,57 @@
+# ==========================================================
+#  generator.py（最終穩定版）
+#  - 完整支援新版 OpenAI SDK (v2.x)
+#  - 自動清除與攔截 proxies 問題
+# ==========================================================
+
+# ---- Hard guard for unexpected 'proxies' in any OpenAI() init ----
 import os
+
+# 1️⃣ 擴大清除所有可能的代理環境變數
+for _k in [
+    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+    "http_proxy", "https_proxy", "all_proxy",
+    "OPENAI_HTTP_PROXY", "OPENAI_PROXY",
+    "openai_http_proxy", "openai_proxy"
+]:
+    if _k in os.environ:
+        print(f"⚠️ 清除代理環境變數：{_k}")
+        os.environ.pop(_k, None)
+
+# 2️⃣ 通知 SDK 不走任何代理
+os.environ["NO_PROXY"] = "*"
+os.environ["no_proxy"] = "*"
+
+# 3️⃣ 攔截 OpenAI() 初始化中的 proxies
+try:
+    from openai import OpenAI as _SDKOpenAI
+    _old_init = _SDKOpenAI.__init__
+
+    def _patched_init(self, *args, **kwargs):
+        if "proxies" in kwargs:
+            print("⚠️ 偵測到 proxies 參數，已自動移除以避免 SDK 錯誤。")
+            kwargs.pop("proxies", None)
+        # 嘗試清除 http_client 內的代理設定
+        if "http_client" in kwargs:
+            try:
+                http_client = kwargs["http_client"]
+                if hasattr(http_client, "proxies"):
+                    setattr(http_client, "proxies", None)
+            except Exception:
+                pass
+        return _old_init(self, *args, **kwargs)
+
+    _SDKOpenAI.__init__ = _patched_init
+    print("✅ OpenAI() 初始化 proxies 防護已啟用")
+except Exception as _e:
+    print(f"ℹ️ OpenAI() 補丁略過：{_e}")
+
+# ==========================================================
+# 主要生成邏輯
+# ==========================================================
 import openai
 from typing import Dict, Tuple, List, TypedDict
 from engine.template_loader import load_template
-
-# === 初始化設定 ===
-def _clear_proxy_env():
-    """安全清除代理環境變數（避免 Streamlit Cloud 自動注入 proxies）"""
-    for var in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"]:
-        if var in os.environ:
-            print(f"⚠️ 移除環境變數：{var}")
-            os.environ.pop(var, None)
-
-_clear_proxy_env()
 
 # === 常數定義 ===
 TRANSCRIPT_LENGTH_THRESHOLD = 8000
@@ -44,12 +84,10 @@ def generate_article(
     model: str = DEFAULT_MODEL,
     max_tokens: int = MAX_TOKENS_NORMAL
 ) -> Tuple[str, Dict, int]:
-    """
-    生成專訪文章（支援新版 SDK + 多模型選擇）
-    """
-    openai.api_key = api_key  # ✅ 新版 SDK 使用全域金鑰設定
+    """生成專訪文章（支援新版 SDK + 多模型選擇）"""
+    openai.api_key = api_key
 
-    # === 模型別名對照表 ===
+    # === 模型別名 ===
     model_alias = {
         "gpt-5-mini": "gpt-5-mini",
         "gpt-4-turbo": "gpt-4-turbo",
@@ -59,7 +97,7 @@ def generate_article(
     }
     selected_model = model_alias.get(model, DEFAULT_MODEL)
 
-    # === 解析受訪者資訊 ===
+    # === 解析受訪者 ===
     participants_info = _parse_participants(participants)
     participants_desc = _format_participants(participants_info)
 
@@ -78,7 +116,7 @@ def generate_article(
     except Exception as e:
         raise Exception(f"模板載入失敗：{str(e)}")
 
-    # === Prompt 準備 ===
+    # === Prompt ===
     system_prompt = (
         "你是一位專業的專訪報導撰稿人，擅長將逐字稿轉化為具敘事感與邏輯結構的完整文章，"
         "能精準控制篇幅與引用比例，符合企業／政府／教育等正式出版需求。"
@@ -115,20 +153,21 @@ def generate_article(
 6. 請輸出完整文章（含主標題 # 與小標題 ##），段落之間以空行分隔
 """
 
-    # === 呼叫新版 Chat Completions API ===
+    # === 呼叫 Chat Completions API ===
     for attempt in range(MAX_API_ATTEMPTS):
         try:
             print(f"🧠 使用模型：{selected_model}")
-
-            response = openai.chat.completions.create(
+            from openai import OpenAI  # 顯式建立 client 確保經過補丁
+            client = OpenAI(api_key=api_key)
+            response = client.chat.completions.create(
                 model=selected_model,
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
+                    {"role": "user", "content": user_prompt},
                 ],
                 temperature=TEMPERATURE,
                 top_p=TOP_P,
-                max_completion_tokens=min(max_tokens, 4000)
+                max_completion_tokens=min(max_tokens, 4000),
             )
 
             article = response.choices[0].message.content.strip()
@@ -144,21 +183,22 @@ def generate_article(
 
 
 def summarize_long_transcript(transcript: str, model: str, api_key: str) -> str:
-    """長逐字稿摘要模式（使用新版 SDK）"""
-    openai.api_key = api_key
+    """長逐字稿摘要模式"""
+    from openai import OpenAI
+    client = OpenAI(api_key=api_key)
     segments = _split_transcript(transcript, MAX_SEGMENT_LENGTH)
     summaries = []
     for idx, seg in enumerate(segments, 1):
         print(f"🧩 正在摘要第 {idx} 段 / 共 {len(segments)} 段")
         try:
-            response = openai.chat.completions.create(
+            response = client.chat.completions.create(
                 model=model,
                 messages=[
                     {"role": "system", "content": "你是一位摘要專家，請保留人物觀點、數據、事件邏輯。"},
-                    {"role": "user", "content": f"請摘要以下逐字稿內容，限 300–400 字：\n{seg}"}
+                    {"role": "user", "content": f"請摘要以下逐字稿內容，限 300–400 字：\n{seg}"},
                 ],
                 temperature=0.5,
-                max_completion_tokens=800
+                max_completion_tokens=800,
             )
             summaries.append(response.choices[0].message.content.strip())
         except Exception as e:
