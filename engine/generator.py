@@ -1,55 +1,28 @@
 # ==========================================================
-#  generator.py（最終穩定版）
-#  - 完整支援新版 OpenAI SDK (v2.x)
-#  - 自動清除與攔截 proxies 問題
+#  generator.py（修正版 - 僅移除 proxies 問題）
 # ==========================================================
 
-# ---- Hard guard for unexpected 'proxies' in any OpenAI() init ----
 import os
 
-# 1️⃣ 擴大清除所有可能的代理環境變數
+# 清除可能的代理環境變數
 for _k in [
     "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
     "http_proxy", "https_proxy", "all_proxy",
-    "OPENAI_HTTP_PROXY", "OPENAI_PROXY",
-    "openai_http_proxy", "openai_proxy"
 ]:
-    if _k in os.environ:
-        print(f"⚠️ 清除代理環境變數：{_k}")
-        os.environ.pop(_k, None)
+    os.environ.pop(_k, None)
 
-# 2️⃣ 通知 SDK 不走任何代理
+# 通知 SDK 不走任何代理
 os.environ["NO_PROXY"] = "*"
 os.environ["no_proxy"] = "*"
 
-# 3️⃣ 攔截 OpenAI() 初始化中的 proxies
-try:
-    from openai import OpenAI as _SDKOpenAI
-    _old_init = _SDKOpenAI.__init__
+print("✅ 環境變數清理完成（已移除 proxies 相關設定）")
 
-    def _patched_init(self, *args, **kwargs):
-        if "proxies" in kwargs:
-            print("⚠️ 偵測到 proxies 參數，已自動移除以避免 SDK 錯誤。")
-            kwargs.pop("proxies", None)
-        # 嘗試清除 http_client 內的代理設定
-        if "http_client" in kwargs:
-            try:
-                http_client = kwargs["http_client"]
-                if hasattr(http_client, "proxies"):
-                    setattr(http_client, "proxies", None)
-            except Exception:
-                pass
-        return _old_init(self, *args, **kwargs)
-
-    _SDKOpenAI.__init__ = _patched_init
-    print("✅ OpenAI() 初始化 proxies 防護已啟用")
-except Exception as _e:
-    print(f"ℹ️ OpenAI() 補丁略過：{_e}")
+# ✅ 移除了原本的 monkey patching 程式碼（第 22-44 行）
 
 # ==========================================================
 # 主要生成邏輯
 # ==========================================================
-import openai
+from openai import OpenAI
 from typing import Dict, Tuple, List, TypedDict
 from engine.template_loader import load_template
 
@@ -85,7 +58,6 @@ def generate_article(
     max_tokens: int = MAX_TOKENS_NORMAL
 ) -> Tuple[str, Dict, int]:
     """生成專訪文章（支援新版 SDK + 多模型選擇）"""
-    openai.api_key = api_key
 
     # === 模型別名 ===
     model_alias = {
@@ -157,8 +129,7 @@ def generate_article(
     for attempt in range(MAX_API_ATTEMPTS):
         try:
             print(f"🧠 使用模型：{selected_model}")
-            from openai import OpenAI  # 顯式建立 client 確保經過補丁
-            client = OpenAI(api_key=api_key)
+            client = OpenAI(api_key=api_key)  # ✅ 簡單直接的初始化
             response = client.chat.completions.create(
                 model=selected_model,
                 messages=[
@@ -184,7 +155,6 @@ def generate_article(
 
 def summarize_long_transcript(transcript: str, model: str, api_key: str) -> str:
     """長逐字稿摘要模式"""
-    from openai import OpenAI
     client = OpenAI(api_key=api_key)
     segments = _split_transcript(transcript, MAX_SEGMENT_LENGTH)
     summaries = []
