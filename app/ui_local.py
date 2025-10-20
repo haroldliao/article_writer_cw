@@ -7,6 +7,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 import streamlit as st
 from engine.generator import generate_article
+from engine.postprocess import build_docx_from_markdown  # ✅ 新增匯入
 from datetime import datetime
 import json
 
@@ -86,10 +87,15 @@ with st.sidebar:
 
     opening_context = st.text_area("採訪情境（選填）", height=80,
                                    placeholder="例：午後陽光灑進落地窗，王執行長微笑著說...")
+    
     model_choice = st.selectbox(
         "AI 模型選擇",
-        ["gpt-5-mini", "gpt-4-turbo", "gpt-5"],
-        help="依用途選擇：短篇測試用 gpt-5-mini｜一般專訪稿 gpt-4-turbo｜高階精修用 gpt-5"
+        ["快速測試", "正式生成"],
+        index=1,
+        help="""
+- 快速測試（gpt-4o-mini）：適合功能測試、快速驗證，成本低、速度快
+- 正式生成（gpt-4o）：適合正式文章、長逐字稿處理，品質高、穩定可靠
+        """
     )
 
     generate_btn = st.button("🚀 生成文章", use_container_width=True, type="primary")
@@ -101,44 +107,93 @@ if generate_btn:
         st.error(msg)
         st.stop()
 
-    with st.spinner("🤖 AI 正在生成文章..."):
-        try:
-            article, checks, retries = generate_article(
-                subject=subject,
-                company=company,
-                participants=participants,
-                transcript=transcript,
-                summary_points=summary_points,
-                opening_style=opening_style,
-                opening_context=opening_context,
-                paragraphs=paragraphs,
-                api_key=api_key,
-                model=model_choice,
-                max_tokens=4000
+    # ✅ 修改：移除 spinner，改用簡單訊息
+    status_placeholder = st.empty()
+    status_placeholder.info("🤖 AI 正在生成文章，請稍候...")
+    
+    try:
+        article, checks, retries = generate_article(
+            subject=subject,
+            company=company,
+            participants=participants,
+            transcript=transcript,
+            summary_points=summary_points,
+            opening_style=opening_style,
+            opening_context=opening_context,
+            paragraphs=paragraphs,
+            api_key=api_key,
+            model=model_choice,
+            max_tokens=4000
+        )
+
+        # ✅ 清除狀態訊息
+        status_placeholder.empty()
+        
+        st.balloons()
+        st.success(f"✅ 生成完成！（重試 {retries} 次）")
+        
+        # ✅ 修改：新增 4 個 tab，包含 Word 和 TXT 下載
+        tab1, tab2, tab3, tab4 = st.tabs(["📄 文章內容", "🔍 品質檢查", "💾 下載 Markdown", "📦 下載其他格式"])
+        
+        with tab1:
+            st.markdown(article)
+            wc = count_words(article)
+            actual_model = "gpt-4o-mini" if model_choice == "快速測試" else "gpt-4o"
+            st.caption(f"📝 字數：{wc['total']}　模型：{actual_model}")
+        
+        with tab2:
+            st.json(checks)
+        
+        with tab3:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename_base = f"{company}_{subject}_{timestamp}"
+            
+            st.download_button(
+                "📥 下載 Markdown (.md)",
+                data=article,
+                file_name=f"{filename_base}.md",
+                mime="text/markdown",
+                use_container_width=True
+            )
+        
+        with tab4:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename_base = f"{company}_{subject}_{timestamp}"
+            
+            # ✅ Word 下載
+            st.subheader("📄 Microsoft Word")
+            try:
+                docx_data = build_docx_from_markdown(article)
+                st.download_button(
+                    "📥 下載 Word (.docx)",
+                    data=docx_data,
+                    file_name=f"{filename_base}.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    use_container_width=True
+                )
+            except Exception as e:
+                st.error(f"Word 檔案生成失敗：{e}")
+            
+            st.divider()
+            
+            # ✅ 純文字下載
+            st.subheader("📝 純文字檔")
+            # 移除 Markdown 標記
+            plain_text = article.replace("# ", "").replace("## ", "").replace("**", "")
+            st.download_button(
+                "📥 下載純文字 (.txt)",
+                data=plain_text,
+                file_name=f"{filename_base}.txt",
+                mime="text/plain",
+                use_container_width=True
             )
 
-            st.balloons()
-            st.success(f"✅ 生成完成！（重試 {retries} 次）")
-            tab1, tab2, tab3 = st.tabs(["📄 文章內容", "🔍 品質檢查", "💾 匯出"])
-            with tab1:
-                st.markdown(article)
-                wc = count_words(article)
-                st.caption(f"📝 字數：{wc['total']}　模型：{model_choice}")
-            with tab2:
-                st.json(checks)
-            with tab3:
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                filename = f"{company}_{subject}_{timestamp}.md"
-                st.download_button("📥 下載 Markdown", data=article,
-                                   file_name=filename, mime="text/markdown")
-
-        except Exception as e:
-            error_msg = str(e)
-            if "模板載入失敗" in error_msg:
-                st.error("❌ 模板載入失敗，請確認 engine/templates/article_template.txt 是否存在且可讀取。")
-            elif "max_completion_tokens" in error_msg or "max_tokens" in error_msg:
-                st.error("⚠️ 參數錯誤：請更新 OpenAI 套件版本或確認模型支援。")
-            else:
-                st.error(f"❌ 生成失敗：{error_msg}")
-        finally:
-            st.stop()
+    except Exception as e:
+        status_placeholder.empty()  # ✅ 清除狀態訊息
+        error_msg = str(e)
+        if "模板載入失敗" in error_msg:
+            st.error("❌ 模板載入失敗，請確認 engine/templates/article_template.txt 是否存在且可讀取。")
+        elif "max_completion_tokens" in error_msg or "max_tokens" in error_msg:
+            st.error("⚠️ 參數錯誤：請更新 OpenAI 套件版本或確認模型支援。")
+        else:
+            st.error(f"❌ 生成失敗：{error_msg}")
