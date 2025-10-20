@@ -1,28 +1,38 @@
-# === 基本環境 ===
-streamlit>=1.31.0
+# ============================
+# 專訪文章生成器 - 套件需求
+# ============================
+
+# === 核心套件 ===
+streamlit==1.50.0
 openai==1.40.2
+httpx>=0.23.0,<0.27.0  # 固定版本避免相容性問題
 
 # === 資料處理 ===
 pandas>=2.0.0
 numpy>=1.24.0
 
 # === 文件處理 ===
-python-docx>=0.8.11
+python-docx>=1.0.0
 
-# === 開發工具（可選，看需求）===
-# jupyter         # 如果你要 Notebook 測試才需要
-# faiss-cpu       # 如果未來要大規模 embeddings 檢索才需要
+# === 環境設定 ===
+python-dotenv>=1.0.0
 
-# ============================
-# Article Writer App 套件需求
-# ============================
-
-streamlit>=1.37.0
-openai==1.40.2
-python-dotenv>=1.0.1
-pandas>=2.0.0
+# === 輔助工具 ===
 tiktoken>=0.7.0
-requests>=2.31.0  # 建議保留，通用用途
-python-docx>=0.8.11
+requests>=2.31.0
 
-
+# ============================
+# 說明
+# ============================
+# 
+# 重要版本固定：
+# - openai==1.40.2：經測試穩定版本
+# - httpx<0.27.0：避免 proxies 參數相容性問題
+# - streamlit==1.50.0：當前穩定版本
+#
+# 安裝指令：
+# pip install -r requirements.txt
+#
+# 更新指令（謹慎使用）：
+# pip install --upgrade -r requirements.txt
+#
